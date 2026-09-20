@@ -1,43 +1,223 @@
-import { useEffect, useMemo, useState, type ReactNode } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import { createRoot } from 'react-dom/client'
-import { supabase, supabaseConfigured } from './lib/supabase'
-import { BrainCircuit, BookOpen, FlaskConical, Gauge, GraduationCap, LayoutDashboard, Menu, Newspaper, Radar, Search, Sigma, Terminal, X, CheckCircle2, Play, ArrowRight, BarChart3, Cpu, Code2, Bot, LogOut } from 'lucide-react'
+import {
+  BarChart3, BookOpen, BrainCircuit, Code2, FlaskConical, Gauge, GraduationCap,
+  LayoutDashboard, LogOut, Menu, Newspaper, Radar, Search, Terminal, X, AlertTriangle,
+} from 'lucide-react'
+import { supabase } from '@/integrations/supabase/client'
+import {
+  useAuthUser, useRows, nextLevel,
+  type AttemptRow, type ExperimentRow, type IdeaRow, type MasteryRow, type MistakeRow,
+  type NoteRow, type PaperProgressRow, type UniCourseRow,
+} from '@/lib/store'
+import Dashboard from '@/pages/Dashboard'
+import Curriculum from '@/pages/Curriculum'
+import Practice from '@/pages/Practice'
+import Papers from '@/pages/Papers'
+import Research from '@/pages/Research'
+import Intelligence from '@/pages/Intelligence'
+import GPA from '@/pages/GPA'
+import Mistakes from '@/pages/Mistakes'
+import Portfolio from '@/pages/Portfolio'
+import Reports from '@/pages/Reports'
 import './styles.css'
 
-type Item={name:string;icon:any}; type Section={group:string;items:Item[]}
-const sections:Section[]=[
- {group:'Daily',items:[{name:'Dashboard',icon:LayoutDashboard},{name:'AI Faculty',icon:BrainCircuit}]},
- {group:'Education',items:[{name:'Curriculum',icon:GraduationCap},{name:'Practice & Exams',icon:Terminal},{name:'Mathematics & Proof',icon:Sigma}]},
- {group:'Research',items:[{name:'Research Observatory',icon:BookOpen},{name:'Research & Model Lab',icon:FlaskConical},{name:'Knowledge Graph',icon:Radar}]},
- {group:'Intelligence',items:[{name:'AI Intelligence',icon:Newspaper},{name:'Technology Radar',icon:Radar},{name:'Open Source Radar',icon:BookOpen}]},
- {group:'Record',items:[{name:'GPA Engine',icon:Gauge},{name:'Reports & Analytics',icon:BarChart3},{name:'Portfolio',icon:Code2}]},
+const sections = [
+  { group: 'Daily', items: [{ name: 'Dashboard', icon: LayoutDashboard }] },
+  { group: 'Education', items: [{ name: 'Curriculum', icon: GraduationCap }, { name: 'Practice & Exams', icon: Terminal }] },
+  { group: 'Research', items: [{ name: 'Research Observatory', icon: BookOpen }, { name: 'Research Lab', icon: FlaskConical }] },
+  { group: 'Intelligence', items: [{ name: 'AI Intelligence', icon: Newspaper }, { name: 'Technology Radar', icon: Radar }, { name: 'Open Source Radar', icon: BookOpen }] },
+  { group: 'Record', items: [{ name: 'Mistakes & Review', icon: AlertTriangle }, { name: 'GPA Engine', icon: Gauge }, { name: 'Reports & Analytics', icon: BarChart3 }, { name: 'Portfolio', icon: Code2 }] },
 ]
-const defaults=[['Algorithms & Data Structures','Graphs, heaps, amortized analysis',72],['Probability for ML','Random variables, distributions, Bayes',61],['Computer Architecture','ISA, caches, pipelines, memory',38],['PyTorch Foundations','Tensors, autograd, training loops',24]] as (string|number)[][]
+const allPages = sections.flatMap(s => s.items.map(i => i.name))
 
-function AuthGate(){
- const [mode,setMode]=useState<'login'|'signup'>('login'); const [email,setEmail]=useState(''); const [password,setPassword]=useState(''); const [name,setName]=useState(''); const [error,setError]=useState(''); const [busy,setBusy]=useState(false)
- if(!supabaseConfigured) return <div className="authscreen"><div className="authcard"><div className="mark">CS</div><h1>CS Nexus</h1><p>Supabase is not configured for this deployment.</p><code>VITE_SUPABASE_URL<br/>VITE_SUPABASE_PUBLISHABLE_KEY</code><p>Add those Vercel environment variables, then redeploy.</p></div></div>
- const submit=async(e:any)=>{e.preventDefault();setBusy(true);setError('');const result=mode==='login'?await supabase!.auth.signInWithPassword({email,password}):await supabase!.auth.signUp({email,password,options:{data:{display_name:name}}});setBusy(false);if(result.error)setError(result.error.message);else if(mode==='signup'&&!result.data.session)setError('Account created. Check your email to confirm it, then sign in.')}
- return <div className="authscreen"><form className="authcard" onSubmit={submit}><div className="mark">CS</div><h1>CS Nexus</h1><p>{mode==='login'?'Sign in to your computation workspace.':'Create your computation workspace.'}</p>{mode==='signup'&&<input required value={name} onChange={e=>setName(e.target.value)} placeholder="Display name"/>}<input required type="email" value={email} onChange={e=>setEmail(e.target.value)} placeholder="Email"/><input required minLength={6} type="password" value={password} onChange={e=>setPassword(e.target.value)} placeholder="Password"/>{error&&<div className="notice">{error}</div>}<button className="primary full" disabled={busy}>{busy?'Working…':mode==='login'?'Sign in':'Create account'}</button><button type="button" className="linkbutton" onClick={()=>{setMode(mode==='login'?'signup':'login');setError('')}}>{mode==='login'?'Create an account':'Back to sign in'}</button></form></div>
+const commands: [string, string][] = [
+  ["Start today's study plan", 'Dashboard'],
+  ['Give me a hard algorithms problem', 'Practice & Exams'],
+  ['Start an interleaved exam', 'Practice & Exams'],
+  ['Explain transformers', 'Research Observatory'],
+  ['Read a paper with me', 'Research Observatory'],
+  ['Find my weakest concepts', 'Mistakes & Review'],
+  ["Show today's AI news", 'AI Intelligence'],
+  ['Check the technology radar', 'Technology Radar'],
+  ['Find a project to contribute to', 'Open Source Radar'],
+  ['Review my mistakes', 'Mistakes & Review'],
+  ['Show my GPA', 'GPA Engine'],
+  ['Open my research ideas', 'Research Lab'],
+  ['Open my portfolio', 'Portfolio'],
+  ['Show my long-term report', 'Reports & Analytics'],
+]
+
+function AuthGate() {
+  const [mode, setMode] = useState<'login' | 'signup'>('login')
+  const [email, setEmail] = useState('')
+  const [password, setPassword] = useState('')
+  const [name, setName] = useState('')
+  const [error, setError] = useState('')
+  const [busy, setBusy] = useState(false)
+
+  const submit = async (e: React.FormEvent) => {
+    e.preventDefault(); setBusy(true); setError('')
+    const result = mode === 'login'
+      ? await supabase.auth.signInWithPassword({ email, password })
+      : await supabase.auth.signUp({ email, password, options: { data: { display_name: name }, emailRedirectTo: window.location.origin } })
+    setBusy(false)
+    if (result.error) setError(result.error.message)
+    else if (mode === 'signup' && !result.data.session) setError('Account created. Confirm your email, then sign in.')
+  }
+
+  return (
+    <div className="authscreen">
+      <form className="authcard" onSubmit={submit}>
+        <div className="mark">CS</div>
+        <h1>CS Research University</h1>
+        <p>{mode === 'login' ? 'Sign in to your computational institution.' : 'Create your permanent academic record.'}</p>
+        {mode === 'signup' && <input required value={name} onChange={e => setName(e.target.value)} placeholder="Display name" />}
+        <input required type="email" value={email} onChange={e => setEmail(e.target.value)} placeholder="Email" />
+        <input required minLength={6} type="password" value={password} onChange={e => setPassword(e.target.value)} placeholder="Password" />
+        {error && <div className="notice">{error}</div>}
+        <button className="primary full" disabled={busy}>{busy ? 'Working…' : mode === 'login' ? 'Sign in' : 'Create account'}</button>
+        <button type="button" className="linkbutton" onClick={() => { setMode(mode === 'login' ? 'signup' : 'login'); setError('') }}>
+          {mode === 'login' ? 'Create an account' : 'Back to sign in'}
+        </button>
+      </form>
+    </div>
+  )
 }
-function App(){
- const [active,setActive]=useState('Dashboard');const [open,setOpen]=useState(false);const [query,setQuery]=useState('');const [completed,setCompleted]=useState<string[]>([]);const [session,setSession]=useState(false);const [user,setUser]=useState<any>(null)
- useEffect(()=>{if(!supabase)return;supabase.auth.getUser().then(({data})=>setUser(data.user));const {data}=supabase.auth.onAuthStateChange((_e,s)=>setUser(s?.user??null));return()=>data.subscription.unsubscribe()},[])
- useEffect(()=>{if(!supabase||!user)return;supabase.from('nexus_courses').select('title,progress').eq('user_id',user.id).then(({data})=>{if(data?.length)setCompleted(data.filter(x=>x.progress>=100).map(x=>x.title))})},[user])
- const nav=(name:string)=>{setActive(name);setOpen(false);location.hash=name.toLowerCase().replaceAll(' ','-')}
- const toggleCourse=async(name:string)=>{const done=!completed.includes(name);setCompleted(v=>done?[...v,name]:v.filter(x=>x!==name));if(!supabase||!user)return;const course=defaults.find(x=>x[0]===name);if(!course)return;const {data}=await supabase.from('nexus_courses').select('id').eq('user_id',user.id).eq('title',name).maybeSingle();if(data?.id) await supabase.from('nexus_courses').update({progress:done?100:Number(course[2]),updated_at:new Date().toISOString()}).eq('id',data.id);else await supabase.from('nexus_courses').insert({user_id:user.id,title:name,description:String(course[1]),progress:done?100:Number(course[2]),credits:3})}
- if(!user)return <AuthGate/>
- const filtered=useMemo(()=>defaults.filter(c=>String(c[0]).toLowerCase().includes(query.toLowerCase())),[query]); const render=()=>{if(active==='Dashboard')return <Dashboard nav={nav} completed={completed} toggle={toggleCourse} user={user}/>;if(active==='Curriculum')return <Curriculum completed={completed} toggle={toggleCourse} courses={filtered}/>;if(active==='Practice & Exams')return <Practice session={session} setSession={setSession}/>;if(active==='GPA Engine')return <GPA/>;if(active==='Portfolio')return <Portfolio/>;if(active==='AI Faculty')return <Faculty/>;return <Module title={active}/>}
- return <div className="app"><aside className={open?'sidebar open':'sidebar'}><div className="brand"><div className="mark">CS</div><div><b>CS Nexus</b><span>Institute of Computation</span></div><button className="close" onClick={()=>setOpen(false)}><X size={18}/></button></div><nav>{sections.map(s=><div className="navgroup" key={s.group}><label>{s.group}</label>{s.items.map(({name:n,icon:Icon})=><button key={n} className={active===n?'navitem active':'navitem'} onClick={()=>nav(n)}><Icon size={16}/>{n}</button>)}</div>)}</nav><button className="navitem" onClick={()=>supabase?.auth.signOut()}><LogOut size={16}/>Sign out</button></aside><main><header><button className="mobile" onClick={()=>setOpen(true)}><Menu size={18}/></button><div><small>CS NEXUS / WORKSPACE</small><h1>{active}</h1></div><div className="headerActions"><div className="search"><Search size={15}/><input value={query} onChange={e=>setQuery(e.target.value)} placeholder="Search courses"/><kbd>⌘K</kbd></div><div className="avatar">{(user.user_metadata?.display_name||user.email||'SD').slice(0,2).toUpperCase()}</div></div></header><section className="content">{render()}</section></main></div>
+
+function Workspace({ userId, name }: { userId: string; name: string }) {
+  const [active, setActive] = useState('Dashboard')
+  const [open, setOpen] = useState(false)
+  const [query, setQuery] = useState('')
+  const [palette, setPalette] = useState(false)
+  const [cmd, setCmd] = useState('')
+
+  const mastery = useRows<MasteryRow>('mastery', userId)
+  const mistakes = useRows<MistakeRow>('mistakes', userId)
+  const attempts = useRows<AttemptRow>('attempts', userId)
+  const uni = useRows<UniCourseRow>('university_courses', userId)
+  const paperProgress = useRows<PaperProgressRow>('paper_progress', userId)
+  const experiments = useRows<ExperimentRow>('experiments', userId)
+  const ideas = useRows<IdeaRow>('ideas', userId)
+  useRows<NoteRow>('notes', userId)
+
+  const nav = useCallback((page: string) => {
+    if (!allPages.includes(page)) return
+    setActive(page); setOpen(false); setPalette(false)
+  }, [])
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') { e.preventDefault(); setPalette(v => !v); setCmd('') }
+      if (e.key === 'Escape') setPalette(false)
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [])
+
+  const setLevel = useCallback(async (courseId: string, lessonId: string, level: string) => {
+    const row = mastery.rows.find(m => m.lesson_id === lessonId)
+    if (row) await mastery.update(row.id, { level, updated_at: new Date().toISOString() })
+    else await mastery.insert({ lesson_id: lessonId, course_id: courseId, level: level || nextLevel('unseen') })
+  }, [mastery])
+
+  const savePaper = useCallback(async (paperId: string, patch: Record<string, any>) => {
+    const row = paperProgress.rows.find(p => p.paper_id === paperId)
+    if (row) await paperProgress.update(row.id, patch)
+    else await paperProgress.insert({ paper_id: paperId, stage: 'Abstract', read_done: false, reproduction_status: 'not started', explanation: '', ...patch })
+  }, [paperProgress])
+
+  const matches = useMemo(() => {
+    const q = cmd.trim().toLowerCase()
+    return q ? commands.filter(([label]) => label.toLowerCase().includes(q)) : commands
+  }, [cmd])
+
+  const render = () => {
+    switch (active) {
+      case 'Dashboard': return <Dashboard name={name} mastery={mastery.rows} mistakes={mistakes.rows} nav={nav} />
+      case 'Curriculum': return <Curriculum mastery={mastery.rows} setLevel={setLevel} query={query} />
+      case 'Practice & Exams': return (
+        <Practice
+          attempts={attempts.rows}
+          saveAttempt={row => void attempts.insert(row)}
+          logMistake={row => void mistakes.insert({ ...row, resolved: false })}
+        />
+      )
+      case 'Research Observatory': return <Papers progress={paperProgress.rows} save={savePaper} query={query} />
+      case 'Research Lab': return (
+        <Research
+          experiments={experiments.rows}
+          addExperiment={row => void experiments.insert(row)}
+          ideas={ideas.rows}
+          addIdea={row => void ideas.insert(row)}
+        />
+      )
+      case 'GPA Engine': return <GPA rows={uni.rows} add={row => void uni.insert(row)} update={(id, p) => void uni.update(id, p)} remove={id => void uni.remove(id)} />
+      case 'Mistakes & Review': return <Mistakes mistakes={mistakes.rows} mastery={mastery.rows} add={row => void mistakes.insert({ resolved: false, ...row })} update={(id, p) => void mistakes.update(id, p)} />
+      case 'Portfolio': return <Portfolio name={name} mastery={mastery.rows} attempts={attempts.rows} experiments={experiments.rows} ideas={ideas.rows} paperProgress={paperProgress.rows} />
+      case 'Reports & Analytics': return <Reports mastery={mastery.rows} mistakes={mistakes.rows} attempts={attempts.rows} experiments={experiments.rows} paperProgress={paperProgress.rows} uni={uni.rows} />
+      default: return <Intelligence page={active} query={query} />
+    }
+  }
+
+  return (
+    <div className="app">
+      <aside className={open ? 'sidebar open' : 'sidebar'}>
+        <div className="brand">
+          <div className="mark">CS</div>
+          <div><b>CS Research University</b><span>Institute of Computation</span></div>
+          <button className="close" onClick={() => setOpen(false)}><X size={18} /></button>
+        </div>
+        <nav>
+          {sections.map(s => (
+            <div className="navgroup" key={s.group}>
+              <label>{s.group}</label>
+              {s.items.map(({ name: n, icon: Icon }) => (
+                <button key={n} className={active === n ? 'navitem active' : 'navitem'} onClick={() => nav(n)}><Icon size={16} />{n}</button>
+              ))}
+            </div>
+          ))}
+          <div className="navgroup">
+            <label>Session</label>
+            <button className="navitem" onClick={() => void supabase.auth.signOut()}><LogOut size={16} />Sign out</button>
+          </div>
+        </nav>
+      </aside>
+      <main>
+        <header>
+          <button className="mobile" onClick={() => setOpen(true)}><Menu size={18} /></button>
+          <div><small>CS RESEARCH UNIVERSITY</small><h1>{active}</h1></div>
+          <div className="headerActions">
+            <button className="search" onClick={() => { setPalette(true); setCmd('') }}><BrainCircuit size={15} />Command palette<kbd>⌘K</kbd></button>
+            <div className="search"><Search size={15} /><input value={query} onChange={e => setQuery(e.target.value)} placeholder="Filter lessons, papers, news" /></div>
+            <div className="avatar">{name.slice(0, 2).toUpperCase()}</div>
+          </div>
+        </header>
+        <section className="content">{render()}</section>
+      </main>
+      {palette && (
+        <div className="paletteback" onClick={() => setPalette(false)}>
+          <div className="palette" onClick={e => e.stopPropagation()}>
+            <input autoFocus value={cmd} onChange={e => setCmd(e.target.value)} placeholder="Type a command…" />
+            <div className="palettelist">
+              {matches.map(([label, page]) => (
+                <button key={label} onClick={() => nav(page)}><span>{label}</span><em>{page}</em></button>
+              ))}
+              {!matches.length && <p className="empty">No command matches that.</p>}
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  )
 }
-function Dashboard({nav,completed,toggle,user}:{nav:(s:string)=>void;completed:string[];toggle:(s:string)=>void;user:any}){return <><div className="hero"><div><small>COMPUTATION LAB</small><h2>Build. Study. Research.</h2><p>{user.user_metadata?.display_name||user.email}, your persistent CS workspace.</p></div><button className="primary" onClick={()=>nav('Curriculum')}>Continue curriculum <ArrowRight size={15}/></button></div><div className="metrics">{[['Current GPA','3.82 / 4.00','+0.14 this term'],['Courses','6 active','18 credits'],['Research','3 active','1 experiment running'],['Streak','12 days','Best: 18 days']].map(c=><div className="metric" key={c[0]}><span>{c[0]}</span><strong>{c[1]}</strong><em>{c[2]}</em></div>)}</div><div className="grid"><section className="panel"><div className="panelhead"><div><small>THIS WEEK</small><h3>Learning plan</h3></div><button onClick={()=>nav('Curriculum')}>Open curriculum →</button></div>{defaults.map((c,i)=><CourseRow key={c[0]} course={c} index={i} done={completed.includes(String(c[0]))} toggle={toggle}/>)}</section><Research nav={nav}/></div><div className="bottom"><section className="panel"><div className="panelhead"><div><small>INTELLIGENCE FEED</small><h3>What matters now</h3></div><button onClick={()=>nav('AI Intelligence')}>View all →</button></div><article><span className="source">RESEARCH</span><b>Reasoning models are changing how agents plan</b><p>Read, annotate and reproduce papers as engineering inputs.</p></article><article><span className="source">OPEN SOURCE</span><b>New inference tooling cuts local model latency</b><p>Compare benchmarks before adopting a stack.</p></article></section><section className="panel quick"><small>COMMAND CENTER</small><h3>Next action</h3><p>Complete the next curriculum checkpoint.</p><button className="primary full" onClick={()=>nav('Practice & Exams')}>Start 45-minute session <Play size={14}/></button></section></div></>}
-function CourseRow({course,index,done,toggle}:{course:(string|number)[];index:number;done:boolean;toggle:(s:string)=>void}){return <button className="row rowbutton" onClick={()=>toggle(String(course[0]))}><span className="index">0{index+1}</span><div><b>{course[0]}</b><p>{course[1]}</p></div><span className="tag">{done?'DONE':`${course[2]}%`}</span>{done&&<CheckCircle2 size={16}/>}</button>}
-function Research({nav}:{nav:(s:string)=>void}){return <section className="panel"><div className="panelhead"><div><small>RESEARCH DESK</small><h3>Active work</h3></div><button onClick={()=>nav('Research & Model Lab')}>Lab →</button></div>{[['Transformer ablation study','12 experiments queued'],['Small language model','Architecture notes'],['Edge vision benchmark','3 models']].map((r,i)=><div className="research" key={r[0]}><div className={i?'pulse dim':'pulse'}></div><div><b>{r[0]}</b><p>{r[1]}</p></div></div>)}</section>}
-function Curriculum({completed,toggle,courses}:{completed:string[];toggle:(s:string)=>void;courses:(string|number)[][]}){return <div className="view"><ViewHead icon={<GraduationCap/>} title="Curriculum" text="Track your CS, AI and systems sequence."/><div className="coursegrid">{courses.map((c,i)=><div className="coursecard" key={c[0]}><span>MODULE 0{i+1}</span><h3>{c[0]}</h3><p>{c[1]}</p><div className="progress"><i style={{width:`${completed.includes(String(c[0]))?100:c[2]}%`}}/></div><footer><b>{completed.includes(String(c[0]))?100:c[2]}%</b><button onClick={()=>toggle(String(c[0]))}>{completed.includes(String(c[0]))?'Completed':'Mark complete'}</button></footer></div>)}</div></div>}
-function Practice({session,setSession}:{session:boolean;setSession:(v:boolean)=>void}){return <div className="view"><ViewHead icon={<Terminal/>} title="Practice & Exams" text="Timed sessions turn knowledge into working skill."/><div className="actioncard"><Terminal/><h3>45-minute algorithms session</h3><p>Graphs, heaps and complexity analysis.</p><button className="primary" onClick={()=>setSession(!session)}>{session?'Session active':'Start session'} <Play size={14}/></button>{session&&<div className="notice"><CheckCircle2 size={16}/> Focus session started.</div>}</div></div>}
-function GPA(){const [g,setG]=useState<(string|number)[][]>([['Algorithms',4],['AI',3.7],['Math',3.3],['Architecture',4]]);const avg=(g.reduce((a,x)=>a+Number(x[1]),0)/g.length).toFixed(2);return <div className="view"><ViewHead icon={<Gauge/>} title="GPA Engine" text="Calculate your current GPA."/><div className="gpa"><div className="gpanumber">{avg}<small>/ 4.00</small></div>{g.map((x,i)=><label key={x[0] as string}>{x[0]}<select value={x[1]} onChange={e=>setG(v=>v.map((r,j)=>j===i?[r[0],Number(e.target.value)]:r))}><option value="4">A · 4.0</option><option value="3.7">A- · 3.7</option><option value="3.3">B+ · 3.3</option><option value="3">B · 3.0</option></select></label>)}</div></div>}
-function Portfolio(){return <div className="view"><ViewHead icon={<Code2/>} title="Portfolio" text="Your technical record."/><div className="coursegrid"><div className="coursecard"><Cpu/><span>HARDWARE</span><h3>Adaptive Traffic Controller</h3><p>Verilog FSM, sensor input and emergency override.</p></div><div className="coursecard"><Bot/><span>AI</span><h3>AI Research Lab</h3><p>Experiments, model evaluations and reproducible notes.</p></div></div></div>}
-function Faculty(){const [q,setQ]=useState('');const [answer,setAnswer]=useState('');return <div className="view"><ViewHead icon={<BrainCircuit/>} title="AI Faculty" text="Ask for an explanation, study plan or debugging direction."/><div className="faculty"><textarea value={q} onChange={e=>setQ(e.target.value)} placeholder="Ask a CS question..."/><button className="primary" onClick={()=>setAnswer(q?`Faculty workspace received: ${q}`:'Enter a question first.')}>Ask Faculty</button>{answer&&<div className="notice"><BrainCircuit size={16}/>{answer}</div>}</div></div>}
-function Module({title}:{title:string}){return <div className="view"><ViewHead icon={<Radar/>} title={title} text="Workspace ready for connected data and tools."/><div className="modulegrid"><div><small>STATUS</small><h3>Connected application</h3><p>Navigation and workspace state are live.</p></div><div><small>DATA</small><h3>Supabase-backed</h3><p>User progress is stored per account when the database migration is applied.</p></div></div></div>}
-function ViewHead({icon,title,text}:{icon:ReactNode;title:string;text:string}){return <div className="viewhead"><div className="viewicon">{icon}</div><div><small>CS NEXUS</small><h2>{title}</h2><p>{text}</p></div></div>}
-createRoot(document.getElementById('root')!).render(<App/>)
+
+function App() {
+  const { user, ready } = useAuthUser()
+  if (!ready) return <div className="authscreen"><div className="authcard"><div className="mark">CS</div><p>Loading your record…</p></div></div>
+  if (!user) return <AuthGate />
+  const name = (user.user_metadata?.display_name as string) || user.email || 'Student'
+  return <Workspace userId={user.id} name={name} />
+}
+
+createRoot(document.getElementById('root')!).render(<App />)
